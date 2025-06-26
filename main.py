@@ -1,23 +1,19 @@
 import sys
-import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                           QHBoxLayout, QLabel, QPushButton, QTextEdit,
-                           QMessageBox, QGroupBox, QGridLayout)
-from PyQt5.QtCore import Qt, pyqtSlot
-from PyQt5.QtGui import QFont
-from kiwoom_api import KiwoomAPI
+from PyQt5.QtWidgets import *
+from PyQt5.QtCore import *
+from pykiwoom.kiwoom import Kiwoom
 
-class TradingDashboard(QMainWindow):
+class TradingApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.kiwoom = None
+        self.kiwoom = Kiwoom()
         self.init_ui()
-        self.init_kiwoom()
+        self.setup_signals()
         
     def init_ui(self):
         """UI 초기화"""
         self.setWindowTitle("키움증권 자동매매 대시보드")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 1000, 700)
         
         # 중앙 위젯
         central_widget = QWidget()
@@ -26,182 +22,271 @@ class TradingDashboard(QMainWindow):
         # 메인 레이아웃
         main_layout = QVBoxLayout(central_widget)
         
-        # 타이틀
-        title_label = QLabel("키움증권 자동매매 프로그램")
-        title_label.setAlignment(Qt.AlignCenter)
-        title_font = QFont()
-        title_font.setPointSize(16)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
-        main_layout.addWidget(title_label)
+        # 제목
+        title = QLabel("키움증권 자동매매 프로그램")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
+        main_layout.addWidget(title)
         
-        # 연결 상태 그룹
-        self.create_connection_group(main_layout)
+        # 로그인 섹션
+        self.create_login_section(main_layout)
         
-        # 로그 그룹
-        self.create_log_group(main_layout)
+        # 계좌 정보 섹션
+        self.create_account_section(main_layout)
         
-        # 제어 버튼 그룹
-        self.create_control_group(main_layout)
+        # 보유 종목 섹션
+        self.create_holdings_section(main_layout)
         
-    def create_connection_group(self, parent_layout):
-        """연결 상태 그룹 생성"""
-        group = QGroupBox("🔗 연결 상태")
-        layout = QGridLayout(group)
+        # 로그 섹션
+        self.create_log_section(main_layout)
         
-        # API 상태
-        layout.addWidget(QLabel("API 상태:"), 0, 0)
-        self.api_status_label = QLabel("확인 중...")
-        self.api_status_label.setStyleSheet("color: orange")
-        layout.addWidget(self.api_status_label, 0, 1)
+    def create_login_section(self, layout):
+        """로그인 섹션"""
+        group = QGroupBox("🔐 로그인")
+        group_layout = QHBoxLayout(group)
         
-        # 로그인 상태
-        layout.addWidget(QLabel("로그인 상태:"), 1, 0)
         self.login_status_label = QLabel("로그인 안됨")
-        self.login_status_label.setStyleSheet("color: red")
-        layout.addWidget(self.login_status_label, 1, 1)
+        self.login_status_label.setStyleSheet("color: red; font-weight: bold;")
+        group_layout.addWidget(self.login_status_label)
         
-        # 서버 타입
-        layout.addWidget(QLabel("서버 타입:"), 2, 0)
-        self.server_type_label = QLabel("-")
-        layout.addWidget(self.server_type_label, 2, 1)
-        
-        # 계좌 정보
-        layout.addWidget(QLabel("계좌 목록:"), 3, 0)
-        self.account_label = QLabel("-")
-        layout.addWidget(self.account_label, 3, 1)
-        
-        parent_layout.addWidget(group)
-        
-    def create_log_group(self, parent_layout):
-        """로그 그룹 생성"""
-        group = QGroupBox("📄 로그")
-        layout = QVBoxLayout(group)
-        
-        self.log_text = QTextEdit()
-        self.log_text.setMaximumHeight(200)
-        self.log_text.setReadOnly(True)
-        layout.addWidget(self.log_text)
-        
-        parent_layout.addWidget(group)
-        
-    def create_control_group(self, parent_layout):
-        """제어 버튼 그룹 생성"""
-        group = QGroupBox("🎮 제어")
-        layout = QHBoxLayout(group)
+        group_layout.addStretch()
         
         self.login_button = QPushButton("키움 로그인")
-        self.login_button.clicked.connect(self.on_login_clicked)
-        self.login_button.setEnabled(False)
-        layout.addWidget(self.login_button)
+        self.login_button.clicked.connect(self.login_kiwoom)
+        group_layout.addWidget(self.login_button)
         
         self.logout_button = QPushButton("로그아웃")
-        self.logout_button.clicked.connect(self.on_logout_clicked)
+        self.logout_button.clicked.connect(self.logout_kiwoom)
         self.logout_button.setEnabled(False)
-        layout.addWidget(self.logout_button)
+        group_layout.addWidget(self.logout_button)
         
-        parent_layout.addWidget(group)
+        layout.addWidget(group)
         
-    def init_kiwoom(self):
-        """키움 API 초기화"""
-        self.log("🔌 키움 OpenAPI 초기화...")
+    def create_account_section(self, layout):
+        """계좌 정보 섹션"""
+        group = QGroupBox("💰 계좌 정보")
+        group_layout = QGridLayout(group)
+        
+        # 라벨들
+        labels = ["계좌번호:", "서버타입:", "예수금:", "총평가액:", "총손익:", "수익률:"]
+        self.account_labels = {}
+        
+        for i, label_text in enumerate(labels):
+            label = QLabel(label_text)
+            value_label = QLabel("-")
+            value_label.setStyleSheet("font-weight: bold;")
+            
+            group_layout.addWidget(label, i//2, (i%2)*2)
+            group_layout.addWidget(value_label, i//2, (i%2)*2+1)
+            
+            self.account_labels[label_text] = value_label
+            
+        layout.addWidget(group)
+        
+    def create_holdings_section(self, layout):
+        """보유 종목 섹션"""
+        group = QGroupBox("📊 보유 종목")
+        group_layout = QVBoxLayout(group)
+        
+        # 테이블
+        self.holdings_table = QTableWidget()
+        self.holdings_table.setColumnCount(7)
+        self.holdings_table.setHorizontalHeaderLabels([
+            "종목명", "종목코드", "보유수량", "매입가", "현재가", "평가손익", "수익률(%)"
+        ])
+        
+        # 테이블 스타일
+        header = self.holdings_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        self.holdings_table.setAlternatingRowColors(True)
+        
+        group_layout.addWidget(self.holdings_table)
+        layout.addWidget(group)
+        
+    def create_log_section(self, layout):
+        """로그 섹션"""
+        group = QGroupBox("📝 로그")
+        group_layout = QVBoxLayout(group)
+        
+        self.log_text = QTextEdit()
+        self.log_text.setMaximumHeight(150)
+        self.log_text.setReadOnly(True)
+        group_layout.addWidget(self.log_text)
+        
+        layout.addWidget(group)
+        
+    def setup_signals(self):
+        """시그널 연결"""
+        # pykiwoom 시그널 연결 (필요시 구현)
+        pass
+        
+    def login_kiwoom(self):
+        """키움 로그인"""
+        self.log("🔐 키움증권 로그인 시도...")
+        self.log("⚠️ 키움 로그인창에서 '모의투자 접속'을 체크하고 로그인하세요!")
         
         try:
-            self.kiwoom = KiwoomAPI()
-            self.kiwoom.login_status_changed.connect(self.on_login_status_changed)
+            # 로그인 시도
+            err_code = self.kiwoom.comm_connect()
             
-            if self.kiwoom.ocx:
-                self.api_status_label.setText("API 연결됨")
-                self.api_status_label.setStyleSheet("color: green")
-                self.log("✅ 키움 OpenAPI 연결 성공")
-                self.login_button.setEnabled(True)
+            if err_code == 0:
+                self.log("✅ 로그인 요청 성공 - 키움 로그인창 대기 중...")
+                
+                # 로그인 완료까지 대기
+                self.login_button.setEnabled(False)
+                
+                # 2초 후 로그인 상태 확인
+                QTimer.singleShot(2000, self.check_login_status)
+                
             else:
-                self.api_status_label.setText("API 연결 실패")
-                self.api_status_label.setStyleSheet("color: red")
-                self.log("❌ 키움 OpenAPI 연결 실패")
-                self.log("📌 키움 홈페이지에서 OpenAPI 사용 신청 확인")
+                self.log(f"❌ 로그인 요청 실패: {err_code}")
                 
         except Exception as e:
-            self.api_status_label.setText("API 초기화 오류")
-            self.api_status_label.setStyleSheet("color: red")
-            self.log(f"❌ API 초기화 오류: {e}")
+            self.log(f"❌ 로그인 오류: {e}")
+            
+    def check_login_status(self):
+        """로그인 상태 확인"""
+        try:
+            # 로그인 상태 확인
+            state = self.kiwoom.get_connect_state()
+            
+            if state == 1:
+                self.log("✅ 로그인 성공!")
+                self.login_status_label.setText("로그인됨")
+                self.login_status_label.setStyleSheet("color: green; font-weight: bold;")
+                
+                self.login_button.setEnabled(False)
+                self.logout_button.setEnabled(True)
+                
+                # 계좌 정보 가져오기
+                self.load_account_info()
+                
+            else:
+                self.log("❌ 로그인 대기 중... 키움 로그인창에서 로그인해주세요.")
+                self.login_button.setEnabled(True)
+                
+                # 5초 후 다시 확인
+                QTimer.singleShot(5000, self.check_login_status)
+                
+        except Exception as e:
+            self.log(f"❌ 로그인 상태 확인 오류: {e}")
+            self.login_button.setEnabled(True)
+            
+    def load_account_info(self):
+        """계좌 정보 로드"""
+        try:
+            # 계좌 목록
+            accounts = self.kiwoom.get_login_info("ACCNO").split(';')
+            accounts = [acc for acc in accounts if acc]  # 빈 문자열 제거
+            
+            if accounts:
+                account = accounts[0]  # 첫 번째 계좌 사용
+                self.account_labels["계좌번호:"].setText(account)
+                
+                # 서버 타입
+                server_type = self.kiwoom.get_login_info("GetServerGubun")
+                server_name = "모의투자" if server_type == "1" else "실계좌"
+                self.account_labels["서버타입:"].setText(server_name)
+                
+                # 사용자 정보
+                user_name = self.kiwoom.get_login_info("USER_NAME")
+                self.log(f"👤 사용자: {user_name}")
+                self.log(f"🏦 서버: {server_name}")
+                self.log(f"📊 계좌: {account}")
+                
+                # 계좌 잔고 정보 요청
+                self.request_balance()
+                
+            else:
+                self.log("❌ 계좌 정보를 가져올 수 없습니다.")
+                
+        except Exception as e:
+            self.log(f"❌ 계좌 정보 로드 오류: {e}")
+            
+    def request_balance(self):
+        """잔고 및 보유종목 정보 요청"""
+        try:
+            # 계좌 번호
+            account = self.account_labels["계좌번호:"].text()
+            
+            if account and account != "-":
+                self.log("💰 계좌 잔고 정보 요청 중...")
+                
+                # 계좌평가잔고내역요청 (opw00018)
+                self.kiwoom.set_input_value("계좌번호", account)
+                self.kiwoom.set_input_value("비밀번호", "")
+                self.kiwoom.set_input_value("비밀번호입력매체구분", "00")
+                self.kiwoom.set_input_value("조회구분", "1")
+                
+                # TR 요청
+                err_code = self.kiwoom.comm_rq_data("계좌평가잔고내역요청", "opw00018", 0, "2000")
+                
+                if err_code == 0:
+                    self.log("✅ 잔고 정보 요청 성공")
+                    # 응답 처리는 OnReceiveTrData 이벤트에서 처리 (추후 구현)
+                else:
+                    self.log(f"❌ 잔고 정보 요청 실패: {err_code}")
+                    
+        except Exception as e:
+            self.log(f"❌ 잔고 정보 요청 오류: {e}")
+            
+    def logout_kiwoom(self):
+        """키움 로그아웃"""
+        try:
+            self.kiwoom.comm_terminate()
+            
+            self.login_status_label.setText("로그인 안됨")
+            self.login_status_label.setStyleSheet("color: red; font-weight: bold;")
+            
+            self.login_button.setEnabled(True)
+            self.logout_button.setEnabled(False)
+            
+            # 계좌 정보 초기화
+            for label in self.account_labels.values():
+                label.setText("-")
+                
+            # 보유종목 테이블 초기화
+            self.holdings_table.setRowCount(0)
+            
+            self.log("🚪 로그아웃 완료")
+            
+        except Exception as e:
+            self.log(f"❌ 로그아웃 오류: {e}")
             
     def log(self, message):
         """로그 메시지 추가"""
-        self.log_text.append(message)
+        self.log_text.append(f"[{QTime.currentTime().toString()}] {message}")
+        
+        # 스크롤을 맨 아래로
         cursor = self.log_text.textCursor()
         cursor.movePosition(cursor.End)
         self.log_text.setTextCursor(cursor)
         
-    @pyqtSlot()
-    def on_login_clicked(self):
-        """로그인 버튼 클릭"""
-        if not self.kiwoom or not self.kiwoom.ocx:
-            QMessageBox.warning(self, "경고", "키움 OpenAPI가 연결되지 않았습니다.")
-            return
-            
-        self.log("🔐 키움 로그인 시도...")
-        self.log("⚠️  중요: 다른 키움 프로그램을 모두 종료해주세요!")
-        self.login_button.setEnabled(False)
-        
-        try:
-            self.kiwoom.login()
-        except Exception as e:
-            self.log(f"❌ 로그인 오류: {e}")
-            self.login_button.setEnabled(True)
-            
-    @pyqtSlot()
-    def on_logout_clicked(self):
-        """로그아웃 버튼 클릭"""
-        if self.kiwoom:
-            self.kiwoom.logout()
-            
-    @pyqtSlot(bool, str)
-    def on_login_status_changed(self, success, message):
-        """로그인 상태 변경"""
-        if success:
-            self.login_status_label.setText("로그인됨")
-            self.login_status_label.setStyleSheet("color: green")
-            self.login_button.setEnabled(False)
-            self.logout_button.setEnabled(True)
-            
-            # 계좌 정보 업데이트
-            accounts = self.kiwoom.get_account_list()
-            server_type = self.kiwoom.get_server_type()
-            
-            self.server_type_label.setText(server_type)
-            self.account_label.setText(", ".join(accounts) if accounts else "-")
-            
-            self.log(f"✅ {message}")
-            self.log(f"📊 계좌: {accounts}")
-            self.log(f"🏦 서버: {server_type}")
-            
-        else:
-            self.login_status_label.setText("로그인 실패")
-            self.login_status_label.setStyleSheet("color: red")
-            self.login_button.setEnabled(True)
-            self.logout_button.setEnabled(False)
-            
-            self.log(f"❌ {message}")
-            
     def closeEvent(self, event):
-        """창 종료 시"""
-        if self.kiwoom and self.kiwoom.is_connected():
-            self.kiwoom.logout()
+        """프로그램 종료 시"""
+        try:
+            if self.kiwoom.get_connect_state() == 1:
+                self.kiwoom.comm_terminate()
+        except:
+            pass
         event.accept()
 
 def main():
-    """메인 함수"""
     app = QApplication(sys.argv)
     
-    # 메인 윈도우 생성
-    dashboard = TradingDashboard()
-    dashboard.show()
+    print("=" * 50)
+    print("키움증권 자동매매 프로그램 시작")
+    print("=" * 50)
+    print("📌 실행 전 확인사항:")
+    print("✓ 32bit Python 환경")
+    print("✓ pykiwoom 라이브러리 설치")
+    print("✓ 키움증권 OpenAPI 사용 신청")
+    print("✓ 모의투자 신청")
+    print("=" * 50)
     
-    print("키움증권 자동매매 대시보드 실행")
-    print("로그인 방법: GUI에서 '키움 로그인' 버튼 클릭")
+    window = TradingApp()
+    window.show()
     
-    # 애플리케이션 실행
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
