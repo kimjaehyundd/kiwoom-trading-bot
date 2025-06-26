@@ -1,23 +1,23 @@
 import sys
+import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                           QHBoxLayout, QLabel, QPushButton, QTextEdit, QLineEdit,
+                           QHBoxLayout, QLabel, QPushButton, QTextEdit,
                            QMessageBox, QGroupBox, QGridLayout, QCheckBox)
-from PyQt5.QtCore import Qt, QTimer, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui import QFont
 from kiwoom_api import KiwoomAPI
-import os
 
 class TradingDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
         self.kiwoom = None
         self.init_ui()
-        self.check_prerequisites()
+        self.check_environment()
         
     def init_ui(self):
         """UI 초기화"""
         self.setWindowTitle("키움증권 자동매매 대시보드")
-        self.setGeometry(100, 100, 900, 700)
+        self.setGeometry(100, 100, 800, 600)
         
         # 중앙 위젯
         central_widget = QWidget()
@@ -35,8 +35,8 @@ class TradingDashboard(QMainWindow):
         title_label.setFont(title_font)
         main_layout.addWidget(title_label)
         
-        # 사전 체크 그룹
-        self.create_prerequisite_group(main_layout)
+        # 환경 체크 그룹
+        self.create_environment_group(main_layout)
         
         # 연결 상태 그룹
         self.create_connection_group(main_layout)
@@ -47,30 +47,14 @@ class TradingDashboard(QMainWindow):
         # 제어 버튼 그룹
         self.create_control_group(main_layout)
         
-    def create_prerequisite_group(self, parent_layout):
-        """사전 요구사항 체크 그룹"""
-        group = QGroupBox("📋 사전 요구사항 체크")
+    def create_environment_group(self, parent_layout):
+        """환경 체크 그룹"""
+        group = QGroupBox("📋 환경 체크")
         layout = QVBoxLayout(group)
         
-        # 체크리스트
-        self.checks = {}
-        
-        checklist = [
-            ("koa_studio", "KOA Studio 설치됨"),
-            ("openapi_reg", "키움 OpenAPI 사용 신청 완료"),
-            ("mock_trading", "모의투자 신청 완료"),
-            ("account", "키움증권 계좌 보유")
-        ]
-        
-        for key, text in checklist:
-            checkbox = QCheckBox(text)
-            self.checks[key] = checkbox
-            layout.addWidget(checkbox)
-        
-        # 체크 버튼
-        check_button = QPushButton("환경 체크")
-        check_button.clicked.connect(self.check_prerequisites)
-        layout.addWidget(check_button)
+        self.env_status = QLabel("환경 체크 중...")
+        self.env_status.setStyleSheet("color: orange")
+        layout.addWidget(self.env_status)
         
         parent_layout.addWidget(group)
         
@@ -130,47 +114,39 @@ class TradingDashboard(QMainWindow):
         self.logout_button.setEnabled(False)
         layout.addWidget(self.logout_button)
         
-        self.koa_button = QPushButton("KOA Studio 실행")
-        self.koa_button.clicked.connect(self.run_koa_studio)
-        layout.addWidget(self.koa_button)
-        
-        self.manual_button = QPushButton("수동 로그인 가이드")
-        self.manual_button.clicked.connect(self.show_manual_guide)
-        layout.addWidget(self.manual_button)
+        self.guide_button = QPushButton("사용 가이드")
+        self.guide_button.clicked.connect(self.show_guide)
+        layout.addWidget(self.guide_button)
         
         parent_layout.addWidget(group)
         
-    def check_prerequisites(self):
-        """사전 요구사항 체크"""
+    def check_environment(self):
+        """환경 체크"""
         self.log("🔍 환경 체크 시작...")
         
         # KOA Studio 체크
         koa_paths = [
             "C:\\OpenAPI\\KOAStudioSA.exe",
-            "C:\\OpenApi\\KOAStudioSA.exe",
-            "C:\\Program Files\\Kiwoom\\KOAStudio\\KOAStudioSA.exe",
-            "C:\\Program Files (x86)\\Kiwoom\\KOAStudio\\KOAStudioSA.exe"
+            "C:\\OpenApi\\KOAStudioSA.exe"
         ]
         
-        koa_found = False
-        for path in koa_paths:
-            if os.path.exists(path):
-                koa_found = True
-                self.log(f"✅ KOA Studio 발견: {path}")
-                break
-                
-        self.checks["koa_studio"].setChecked(koa_found)
+        koa_found = any(os.path.exists(path) for path in koa_paths)
         
-        if not koa_found:
+        if koa_found:
+            self.log("✅ KOA Studio 설치 확인됨")
+            self.env_status.setText("환경 확인 완료")
+            self.env_status.setStyleSheet("color: green")
+        else:
             self.log("❌ KOA Studio가 설치되지 않았습니다.")
-            self.log("📌 키움증권 홈페이지에서 KOA Studio를 다운로드하세요.")
+            self.env_status.setText("KOA Studio 설치 필요")
+            self.env_status.setStyleSheet("color: red")
         
-        # API 초기화 시도
+        # API 초기화
         self.init_kiwoom()
         
     def init_kiwoom(self):
         """키움 API 초기화"""
-        self.log("🔌 키움 OpenAPI 초기화 시도...")
+        self.log("🔌 키움 OpenAPI 초기화...")
         
         try:
             self.kiwoom = KiwoomAPI()
@@ -181,11 +157,6 @@ class TradingDashboard(QMainWindow):
                 self.api_status_label.setStyleSheet("color: green")
                 self.log("✅ 키움 OpenAPI 연결 성공")
                 self.login_button.setEnabled(True)
-                
-                # 추가 체크
-                self.checks["openapi_reg"].setChecked(True)
-                self.log("✅ OpenAPI 사용 등록이 완료되어 있습니다.")
-                
             else:
                 self.api_status_label.setText("API 연결 실패")
                 self.api_status_label.setStyleSheet("color: red")
@@ -204,66 +175,37 @@ class TradingDashboard(QMainWindow):
         self.log("1. 키움증권 홈페이지 로그인")
         self.log("2. 고객서비스 > 다운로드 > Open API")
         self.log("3. 'Open API+ 사용 등록/해지' 클릭")
-        self.log("4. 사용 등록 신청")
+        self.log("4. 사용 등록 신청 및 승인 대기")
         self.log("5. 모의투자 > 상시모의투자 신청")
-        self.log("6. 승인 완료 후 프로그램 재실행")
         
-    def run_koa_studio(self):
-        """KOA Studio 실행"""
-        koa_paths = [
-            "C:\\OpenAPI\\KOAStudioSA.exe",
-            "C:\\OpenApi\\KOAStudioSA.exe",
-            "C:\\Program Files\\Kiwoom\\KOAStudio\\KOAStudioSA.exe",
-            "C:\\Program Files (x86)\\Kiwoom\\KOAStudio\\KOAStudioSA.exe"
-        ]
-        
-        for path in koa_paths:
-            if os.path.exists(path):
-                try:
-                    os.startfile(path)
-                    self.log(f"🚀 KOA Studio 실행: {path}")
-                    self.log("📌 KOA Studio에서 먼저 로그인을 테스트해보세요.")
-                    return
-                except Exception as e:
-                    self.log(f"❌ KOA Studio 실행 실패: {e}")
-                    
-        self.log("❌ KOA Studio를 찾을 수 없습니다.")
-        self.log("📌 키움증권 홈페이지에서 KOA Studio를 다운로드하세요.")
-        
-    def show_manual_guide(self):
-        """수동 로그인 가이드"""
+    def show_guide(self):
+        """사용 가이드"""
         guide = '''
-📖 키움 OpenAPI 수동 로그인 가이드
+🔧 키움증권 OpenAPI 사용 가이드
 
-1️⃣ 사전 준비:
-   • 키움증권 계좌 개설
-   • 키움 홈페이지에서 OpenAPI 사용 신청
-   • 모의투자 신청 (홈페이지 > 모의투자 > 상시모의투자)
+📋 사전 준비사항:
+• 키움증권 계좌 개설
+• 키움 홈페이지에서 OpenAPI 사용 신청
+• 모의투자 신청 (상시모의투자)
+• KOA Studio 설치
 
-2️⃣ 로그인 순서:
-   • "키움 로그인" 버튼 클릭
-   • 키움 로그인창이 나타나면:
-     - "모의투자 접속" 체크
-     - 아이디/비밀번호 입력
-     - 공인인증서 비밀번호 입력
+🔐 로그인 방법:
+1. 다른 키움 프로그램(KOA Studio 등) 모두 종료
+2. "키움 로그인" 버튼 클릭
+3. 키움 로그인창에서 "모의투자 접속" 체크
+4. 아이디/비밀번호 입력 후 로그인
 
-3️⃣ 로그인창이 안 나타날 때:
-   • KOA Studio를 먼저 실행해서 로그인 테스트
-   • 자동 로그인이 설정되어 있을 수 있음
-   • 프로그램을 관리자 권한으로 실행
-
-4️⃣ 문제 해결:
-   • 오류 코드 -101: OpenAPI 사용 신청 확인
-   • 오류 코드 -108: 공인인증서 확인
-   • 로그인창 안 보임: KOA Studio 먼저 실행
+❌ 문제 해결:
+• 로그인창이 안 보임: 다른 키움 프로그램 종료
+• API 연결 실패: OpenAPI 사용 신청 확인
+• 오류코드 -101: OpenAPI 승인 확인
+• 오류코드 -106: 중복 로그인 (다른 프로그램 종료)
         '''
-        
-        QMessageBox.information(self, "로그인 가이드", guide)
+        QMessageBox.information(self, "사용 가이드", guide)
         
     def log(self, message):
         """로그 메시지 추가"""
         self.log_text.append(message)
-        # 스크롤을 맨 아래로
         cursor = self.log_text.textCursor()
         cursor.movePosition(cursor.End)
         self.log_text.setTextCursor(cursor)
@@ -276,9 +218,7 @@ class TradingDashboard(QMainWindow):
             return
             
         self.log("🔐 키움 로그인 시도...")
-        self.log("⏳ 키움 로그인창을 기다리는 중...")
-        self.log("💡 로그인창이 나타나지 않으면 'KOA Studio 실행' 버튼을 눌러보세요.")
-        
+        self.log("⚠️  중요: 다른 키움 프로그램을 모두 종료해주세요!")
         self.login_button.setEnabled(False)
         
         try:
@@ -313,9 +253,8 @@ class TradingDashboard(QMainWindow):
             self.log(f"📊 계좌: {accounts}")
             self.log(f"🏦 서버: {server_type}")
             
-            # 체크박스 업데이트
-            self.checks["mock_trading"].setChecked(server_type == "모의투자")
-            self.checks["account"].setChecked(len(accounts) > 0)
+            if server_type == "모의투자":
+                self.log("🎯 이제 모의투자 계좌에서 자동매매를 테스트할 수 있습니다!")
             
         else:
             self.login_status_label.setText("로그인 실패")
@@ -344,18 +283,19 @@ def main():
     dashboard.show()
     
     print("=" * 60)
-    print("키움증권 자동매매 대시보드가 실행되었습니다.")
+    print("키움증권 자동매매 대시보드 실행됨")
     print("=" * 60)
-    print("📌 로그인 전 확인사항:")
-    print("1. 키움증권 계좌 보유")
-    print("2. 키움 홈페이지에서 OpenAPI 사용 신청")
-    print("3. 모의투자 신청")
-    print("4. KOA Studio 설치")
+    print("🚀 실행 전 체크리스트:")
+    print("✓ 키움증권 계좌 보유")
+    print("✓ OpenAPI 사용 신청 완료")
+    print("✓ 모의투자 신청 완료")  
+    print("✓ KOA Studio 설치")
+    print("✓ 다른 키움 프로그램 종료")
     print("-" * 60)
-    print("🔧 문제 해결:")
-    print("• 로그인창이 안 보이면: 'KOA Studio 실행' 버튼 클릭")
-    print("• API 연결 실패시: OpenAPI 사용 신청 확인")
-    print("• GUI에서 '수동 로그인 가이드' 참고")
+    print("💡 로그인 방법:")
+    print("1. '키움 로그인' 버튼 클릭")
+    print("2. 로그인창에서 '모의투자 접속' 체크")
+    print("3. 아이디/비밀번호 입력")
     print("=" * 60)
     
     # 애플리케이션 실행
