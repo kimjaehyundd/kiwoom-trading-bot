@@ -4,12 +4,21 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from pykiwoom.kiwoom import Kiwoom
 
+# 새 모듈들 import
+from account_handler import AccountHandler
+from condition_handler import ConditionHandler
+
 class TradingApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.kiwoom = Kiwoom()
         self.watch_stocks = {}  # 실시간 감시 종목들
         self.real_data = {}  # 실시간 데이터 저장
+        
+        # 새 핸들러들 초기화
+        self.account_handler = AccountHandler(self.kiwoom)
+        self.condition_handler = ConditionHandler(self.kiwoom)
+        
         self.init_ui()
         self.setup_signals()
         
@@ -166,12 +175,59 @@ class TradingApp(QMainWindow):
     def setup_signals(self):
         """pykiwoom 시그널 연결"""
         try:
-            # 실시간 데이터 수신 시그널 연결
+            # 기본 pykiwoom 시그널
             self.kiwoom.OnReceiveRealData.connect(self.receive_real_data)
             self.kiwoom.OnReceiveTrData.connect(self.receive_tr_data)
+            
+            # 새 핸들러 시그널 연결
+            self.account_handler.account_updated.connect(self.update_account_display)
+            self.condition_handler.condition_result.connect(self.on_condition_result)
+            
             self.log("✅ 시그널 연결 완료")
         except Exception as e:
             self.log(f"❌ 시그널 연결 오류: {e}")
+    
+    def update_account_display(self, account_data):
+        """계좌 정보 화면 업데이트 (새 핸들러 연동)"""
+        try:
+            if 'deposit' in account_data:
+                self.account_labels["예수금:"].setText(f"{account_data['deposit']:,}원")
+            
+            if 'total_value' in account_data:
+                self.account_labels["총평가액:"].setText(f"{account_data['total_value']:,}원")
+            
+            if 'total_profit' in account_data:
+                profit_val = account_data['total_profit']
+                profit_text = f"{profit_val:+,}원"
+                label = self.account_labels["총손익:"]
+                label.setText(profit_text)
+                
+                # 손익에 따른 색상 설정
+                if profit_val > 0:
+                    label.setStyleSheet("color: red; font-weight: bold;")
+                elif profit_val < 0:
+                    label.setStyleSheet("color: blue; font-weight: bold;")
+                else:
+                    label.setStyleSheet("color: black; font-weight: bold;")
+            
+            if 'profit_rate' in account_data:
+                rate_text = f"{account_data['profit_rate']:+.2f}%"
+                self.account_labels["수익률:"].setText(rate_text)
+            
+            self.log("✅ 계좌 정보 업데이트 완료 (새 핸들러)")
+            
+        except Exception as e:
+            self.log(f"❌ 계좌 화면 업데이트 오류: {e}")
+    
+    def on_condition_result(self, condition_name, stock_list):
+        """조건검색 결과 처리 (새 핸들러 연동)"""
+        try:
+            for stock_code in stock_list:
+                stock_name = self.kiwoom.get_master_code_name(stock_code)
+                self.log(f"🎯 조건편입: {stock_name}({stock_code}) - {condition_name}")
+                
+        except Exception as e:
+            self.log(f"❌ 조건검색 결과 처리 오류: {e}")
             
     def login_kiwoom(self):
         """키움 로그인"""
@@ -377,48 +433,13 @@ class TradingApp(QMainWindow):
             self.log(f"❌ 실시간 데이터 처리 오류: {e}")
             
     def receive_tr_data(self, screen_no, rqname, trcode, record_name, prev_next):
-        """TR 데이터 수신"""
+        """TR 데이터 수신 (새 핸들러 연동)"""
         try:
             if rqname == "계좌평가잔고내역요청":
-                self.process_balance_data()
+                # 새 핸들러로 처리 위임
+                self.account_handler.process_balance_data(rqname, trcode)
         except Exception as e:
             self.log(f"❌ TR 데이터 처리 오류: {e}")
-            
-    def process_balance_data(self):
-        """계좌 잔고 데이터 처리"""
-        try:
-            # 예수금
-            deposit = self.kiwoom.get_comm_data("opw00018", "", "계좌평가잔고내역요청", 0, "예수금")
-            if deposit:
-                deposit_val = int(deposit)
-                self.account_labels["예수금:"].setText(f"{deposit_val:,}원")
-            
-            # 총평가액
-            total_value = self.kiwoom.get_comm_data("opw00018", "", "계좌평가잔고내역요청", 0, "총평가액")
-            if total_value:
-                total_val = int(total_value)
-                self.account_labels["총평가액:"].setText(f"{total_val:,}원")
-            
-            # 총손익
-            total_profit = self.kiwoom.get_comm_data("opw00018", "", "계좌평가잔고내역요청", 0, "총손익금액")
-            if total_profit:
-                profit_val = int(total_profit)
-                profit_text = f"{profit_val:+,}원"
-                label = self.account_labels["총손익:"]
-                label.setText(profit_text)
-                
-                # 손익에 따른 색상 설정
-                if profit_val > 0:
-                    label.setStyleSheet("color: red; font-weight: bold;")
-                elif profit_val < 0:
-                    label.setStyleSheet("color: blue; font-weight: bold;")
-                else:
-                    label.setStyleSheet("color: black; font-weight: bold;")
-            
-            self.log("✅ 계좌 정보 업데이트 완료")
-            
-        except Exception as e:
-            self.log(f"❌ 계좌 데이터 처리 오류: {e}")
             
     def load_account_info(self):
         """계좌 정보 로드"""
