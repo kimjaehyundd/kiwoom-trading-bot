@@ -1,11 +1,13 @@
 import sys
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import pyqtSignal, QObject, QEventLoop
+from PyQt5.QtCore import pyqtSignal, QObject, QEventLoop, QTimer
 import time
+import subprocess
 
 class KiwoomAPI(QObject):
     # 로그인 상태 변경 시그널
     login_status_changed = pyqtSignal(bool, str)  # (성공여부, 메시지)
+    login_window_status = pyqtSignal(str)  # 로그인창 상태
     
     def __init__(self):
         super().__init__()
@@ -36,62 +38,73 @@ class KiwoomAPI(QObject):
             
         except ImportError as e:
             print(f"❌ PyQt5.QAxContainer 모듈 오류: {e}")
-            print("해결방법: pip install PyQt5 재설치 필요")
             return False
             
         except Exception as e:
             error_msg = str(e)
             print(f"❌ 키움 OpenAPI 연결 실패: {error_msg}")
-            
-            if "could not be instantiated" in error_msg:
-                print("\n📋 필수 확인사항:")
-                print("1. 키움증권 계좌 개설 여부")
-                print("2. 키움 홈페이지에서 OpenAPI 사용 신청 여부") 
-                print("3. 신청 승인 완료 여부 (1-2일 소요)")
-                print("4. KOA Studio 설치 여부")
-                print("5. 모의투자 신청 여부")
-                print("\n📋 해결 방법:")
-                print("1. 키움증권 홈페이지 로그인")
-                print("2. 고객서비스 > 다운로드 > Open API")
-                print("3. '서비스 사용 등록/해지' 탭에서 사용등록")
-                print("4. 모의투자 > 상시모의투자 신청")
-                
-            elif "OnEventConnect" in error_msg:
-                print("\n📋 해결 방법:")
-                print("1. 키움증권 계좌 개설 확인")
-                print("2. OpenAPI 사용 신청 확인")
-                print("3. KOA Studio에서 API 등록 확인")
-                
             return False
     
-    def disable_auto_login(self):
-        """자동 로그인 해제 - 로그인창이 보이도록"""
-        if not self.ocx:
-            print("❌ 키움 OpenAPI가 초기화되지 않았습니다.")
-            return False
+    def kill_existing_processes(self):
+        """기존 키움 프로세스 종료"""
+        processes = [
+            "opstarter.exe",
+            "opsystem.exe", 
+            "opw.exe",
+            "versioning.exe",
+            "KHOpenAPI.exe"
+        ]
+        
+        killed_any = False
+        for process_name in processes:
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/IM", process_name],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    print(f"🔄 {process_name} 프로세스 종료")
+                    killed_any = True
+            except:
+                pass
+        
+        if killed_any:
+            print("⏳ 프로세스 정리 완료, 3초 대기...")
+            time.sleep(3)
             
-        try:
-            print("🔧 자동 로그인 해제 중...")
-            # 자동 로그인 해제
-            result = self.ocx.dynamicCall("KOA_Functions(QString, QString)", "DisableAutoLogin", "")
-            print(f"자동 로그인 해제 결과: {result}")
-            return True
-        except Exception as e:
-            print(f"자동 로그인 해제 실패: {e}")
-            return False
+        return killed_any
     
-    def show_account_window(self):
-        """계좌 비밀번호 설정창 표시"""
-        if not self.ocx:
-            return False
-            
+    def bring_window_to_front(self):
+        """키움 로그인창을 화면 앞으로 가져오기"""
         try:
-            print("💼 계좌 설정창 표시 중...")
-            self.ocx.dynamicCall("KOA_Functions(QString, QString)", "ShowAccountWindow", "")
-            return True
+            import win32gui
+            import win32con
+            
+            def enum_windows_callback(hwnd, windows):
+                if win32gui.IsWindowVisible(hwnd):
+                    window_title = win32gui.GetWindowText(hwnd)
+                    if "키움" in window_title or "OpenAPI" in window_title or "로그인" in window_title:
+                        windows.append((hwnd, window_title))
+                        
+            windows = []
+            win32gui.EnumWindows(enum_windows_callback, windows)
+            
+            for hwnd, title in windows:
+                print(f"🔍 발견된 키움 창: {title}")
+                # 창을 앞으로 가져오기
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.SetForegroundWindow(hwnd)
+                win32gui.SetActiveWindow(hwnd)
+                self.login_window_status.emit(f"로그인창 활성화: {title}")
+                return True
+                
+        except ImportError:
+            print("⚠️ win32gui 모듈이 없습니다. pip install pywin32")
         except Exception as e:
-            print(f"계좌 설정창 표시 실패: {e}")
-            return False
+            print(f"창 활성화 오류: {e}")
+            
+        return False
     
     def login(self):
         """키움증권 로그인"""
@@ -102,18 +115,31 @@ class KiwoomAPI(QObject):
             
         print("🔐 키움증권 로그인 시도 중...")
         
-        # 자동 로그인 해제 (로그인창이 보이도록)
+        # 1. 기존 프로세스 정리
+        print("🔄 기존 키움 프로세스 정리 중...")
+        self.kill_existing_processes()
+        
+        # 2. 자동 로그인 해제
         self.disable_auto_login()
         
         try:
             from PyQt5.QtCore import QEventLoop
             self.login_event_loop = QEventLoop()
             
-            print("⏳ 키움증권 로그인 창이 나타날 때까지 잠시 기다려주세요...")
-            print("📌 로그인 창에서 '모의투자 접속'을 체크하고 로그인하세요")
+            print("⏳ 키움증권 로그인 창 실행 중...")
+            self.login_window_status.emit("로그인창 실행 중...")
             
-            # 로그인 시도
+            # 3. 로그인 시도
             self.ocx.dynamicCall("CommConnect()")
+            
+            # 4. 잠시 대기 후 창 찾기
+            QTimer.singleShot(2000, self.find_login_window)
+            
+            print("📌 로그인 창이 나타나면:")
+            print("   1. '모의투자 접속' 체크")
+            print("   2. 아이디/비밀번호 입력")
+            print("   3. 로그인 버튼 클릭")
+            
             self.login_event_loop.exec_()
             return self.connected
             
@@ -122,10 +148,67 @@ class KiwoomAPI(QObject):
             self.login_status_changed.emit(False, f"로그인 오류: {e}")
             return False
     
+    def find_login_window(self):
+        """로그인창 찾기 및 활성화"""
+        print("🔍 로그인창 검색 중...")
+        
+        if self.bring_window_to_front():
+            print("✅ 키움 로그인창을 화면으로 가져왔습니다.")
+            self.login_window_status.emit("로그인창 활성화됨")
+        else:
+            print("⚠️ 로그인창을 찾을 수 없습니다.")
+            print("💡 다음 사항을 확인해주세요:")
+            print("   1. 작업표시줄에 키움 아이콘이 있는지 확인")
+            print("   2. Alt+Tab으로 숨겨진 창이 있는지 확인")
+            print("   3. 바탕화면에 로그인창이 최소화되어 있는지 확인")
+            
+            self.login_window_status.emit("로그인창을 찾을 수 없음 - 수동으로 확인 필요")
+            
+            # 추가 대기 시간
+            QTimer.singleShot(5000, self.check_login_timeout)
+    
+    def check_login_timeout(self):
+        """로그인 시간 초과 체크"""
+        if not self.connected:
+            print("⏰ 로그인 대기 시간 초과")
+            print("💡 로그인창이 보이지 않는다면:")
+            print("   1. KOA Studio에서 먼저 로그인 테스트")
+            print("   2. 키움증권 HTS에서 정상 로그인 확인")
+            print("   3. 프로그램을 관리자 권한으로 실행")
+            
+            self.login_window_status.emit("로그인 시간 초과 - 수동 확인 필요")
+    
+    def disable_auto_login(self):
+        """자동 로그인 해제"""
+        if not self.ocx:
+            return False
+            
+        try:
+            print("🔧 자동 로그인 해제 시도...")
+            result = self.ocx.dynamicCall("KOA_Functions(QString, QString)", "DisableAutoLogin", "")
+            print(f"   결과: {result}")
+            return True
+        except Exception as e:
+            print(f"   자동 로그인 해제 실패: {e}")
+            return False
+    
+    def show_account_window(self):
+        """계좌 비밀번호 설정창 표시"""
+        if not self.ocx:
+            return False
+            
+        try:
+            print("💼 계좌 설정창 표시...")
+            self.ocx.dynamicCall("KOA_Functions(QString, QString)", "ShowAccountWindow", "")
+            return True
+        except Exception as e:
+            print(f"계좌 설정창 표시 실패: {e}")
+            return False
+    
     def _event_connect(self, err_code):
         """로그인 이벤트 처리"""
         if err_code == 0:
-            print("✅ 실제 로그인 성공!")
+            print("✅ 키움증권 로그인 성공!")
             self.connected = True
             
             # 계좌 목록 가져오기
@@ -164,19 +247,24 @@ class KiwoomAPI(QObject):
             }
             
             error_msg = error_messages.get(err_code, f"알 수 없는 오류 ({err_code})")
-            print(f"❌ 로그인 실패: {error_msg}")
+            print(f"❌ 로그인 실패: {error_msg} (코드: {err_code})")
             
             if err_code == -101:
                 print("\n📋 서버접속 실패 해결방법:")
-                print("1. 키움증권 OpenAPI 사용 신청이 승인되었는지 확인")
-                print("2. 모의투자 신청이 되어 있는지 확인")
-                print("3. 인터넷 연결 상태 확인")
-                print("4. 방화벽 설정 확인")
+                print("1. 인터넷 연결 상태 확인")
+                print("2. 방화벽/백신 프로그램 확인")
+                print("3. 키움증권 서버 점검 시간 확인")
+                
+            elif err_code == -102:
+                print("\n📋 버전처리 실패 해결방법:")
+                print("1. 모든 키움 관련 프로그램 종료")
+                print("2. 버전처리 창에서 '닫기' 클릭")
+                print("3. 업데이트 완료 후 재실행")
                 
             elif err_code == -108:
                 print("\n📋 공인인증 관련:")
-                print("1. 공인인증서가 설치되어 있는지 확인")
-                print("2. 키움증권 HTS에서 정상 로그인되는지 확인")
+                print("1. 공인인증서 정상 설치 확인")
+                print("2. 키움증권 HTS에서 로그인 테스트")
                 
             self.connected = False
             self.login_status_changed.emit(False, f"로그인 실패: {error_msg}")
@@ -219,12 +307,3 @@ class KiwoomAPI(QObject):
     def get_server_type(self):
         """서버 타입 반환 (실계좌/모의투자)"""
         return self.server_type
-        
-    def get_connection_status(self):
-        """연결 상태 상세 정보"""
-        if self.ocx and self.connected:
-            return "실제 API 연결됨"
-        elif self.connected:
-            return "테스트 모드 실행 중"
-        else:
-            return "연결되지 않음"
